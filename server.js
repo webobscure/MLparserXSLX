@@ -4,6 +4,7 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(cors());
 
 // Загружаем файл в память (без записи на диск)
@@ -49,13 +50,10 @@ const swaggerJSDoc = require("swagger-jsdoc");
 const swaggerSpec = swaggerJSDoc({
   definition: {
     openapi: "3.0.0",
-    info: {
-      title: "Excel Mapper API",
-      version: "1.0.0",
-    },
-    servers: [{ url: "http://localhost:3000" }],
+    info: { title: "Excel Mapper API", version: "1.0.0" },
+    servers: [{ url: "/" }], // ✅ важно
   },
-  apis: [], // можно позже подключить автогенерацию из JSDoc
+  apis: [],
 });
 
 // Минимально можно описать руками один эндпоинт:
@@ -185,6 +183,7 @@ app.post("/api/parse-excel", upload.single("file"), (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Excel parser server running on http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Excel parser server running on port ${PORT}`);
 });
