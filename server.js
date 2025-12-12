@@ -86,7 +86,7 @@ swaggerSpec.paths = {
 };
 
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
+app.get("/", (req, res) => res.send("OK"));
 
 /**
  * POST /api/parse-excel
@@ -187,3 +187,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Excel parser server running on port ${PORT}`);
 });
+
+process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
+process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
