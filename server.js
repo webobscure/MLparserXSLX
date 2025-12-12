@@ -43,6 +43,53 @@ function colLetter(n) {
   return s;
 }
 
+const swaggerUi = require("swagger-ui-express");
+const swaggerJSDoc = require("swagger-jsdoc");
+
+const swaggerSpec = swaggerJSDoc({
+  definition: {
+    openapi: "3.0.0",
+    info: {
+      title: "Excel Mapper API",
+      version: "1.0.0",
+    },
+    servers: [{ url: "http://localhost:3000" }],
+  },
+  apis: [], // можно позже подключить автогенерацию из JSDoc
+});
+
+// Минимально можно описать руками один эндпоинт:
+swaggerSpec.paths = {
+  "/api/parse-excel": {
+    post: {
+      summary: "Upload Excel and get columns + preview",
+      parameters: [
+        { name: "sheet", in: "query", schema: { type: "string" } },
+        { name: "headerRow", in: "query", schema: { type: "integer" } },
+        { name: "previewRows", in: "query", schema: { type: "integer", default: 5 } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          "multipart/form-data": {
+            schema: {
+              type: "object",
+              properties: { file: { type: "string", format: "binary" } },
+              required: ["file"],
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: "Parsed info" },
+      },
+    },
+  },
+};
+
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+
 /**
  * POST /api/parse-excel
  * form-data:
