@@ -1,0 +1,18 @@
+{
+  "required": ["product_images", "title", "bullet_points", "description"],
+  "aliases": {
+    "product_images": [
+      "product images", "product image", "images", "image", "image url", "image link",
+      "main image", "primary image", "photo", "picture", "img", "img url"
+    ],
+    "title": [
+      "title", "product title", "name", "product name", "item name"
+    ],
+    "bullet_points": [
+      "bullet point", "bullet points", "bullets", "bullet", "key features", "features", "highlights"
+    ],
+    "description": [
+      "description", "product description", "desc", "long description", "full description"
+    ]
+  }
+}

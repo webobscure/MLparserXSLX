@@ -1,0 +1,4 @@
+[
+  { "id": "demand_forecast", "title": "Demand forecast" },
+  { "id": "stockout_risk", "title": "Stockout risk" }
+]
