@@ -1,7 +1,11 @@
 const nodemailer = require("nodemailer");
 
-function makeTransporter() {
-  return nodemailer.createTransport({
+let transporter;
+
+function getTransporter() {
+  if (transporter) return transporter;
+
+  transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: String(process.env.SMTP_SECURE || "false") === "true", // true для 465
@@ -9,16 +13,29 @@ function makeTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+
+    // полезно для прод-стабильности
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 50,
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 30_000,
   });
+
+  // Проверка один раз (не обязательно, но удобно для логов)
+  transporter.verify().then(
+    () => console.log("SMTP ready"),
+    (err) => console.error("SMTP verify failed:", err?.message || err)
+  );
+
+  return transporter;
 }
 
 async function sendResultEmail({ to, subject, text, filename, contentBuffer }) {
-  const transporter = makeTransporter();
+  const t = getTransporter();
 
-  // полезно на старте, чтобы видеть ошибки SMTP сразу:
-  await transporter.verify();
-
-  return transporter.sendMail({
+  return t.sendMail({
     from: process.env.MAIL_FROM || process.env.SMTP_USER,
     to,
     subject,
