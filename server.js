@@ -30,52 +30,11 @@ const modelsCfg = JSON.parse(
 );
 
 // -------------------------
-// Temp file storage (for Runpod to download)
-// -------------------------
-const TEMP_FILES = new Map(); // token -> { buffer, filename, mime, expiresAt }
-const TEMP_TTL_MS = Number(process.env.TEMP_TTL_MS || 60 * 60 * 1000); // 60 min by default
-
-function putTempFile({ buffer, filename, mime }) {
-  const token = crypto.randomBytes(24).toString("hex");
-  TEMP_FILES.set(token, {
-    buffer,
-    filename: filename || "input.xlsx",
-    mime: mime || "application/octet-stream",
-    expiresAt: Date.now() + TEMP_TTL_MS,
-  });
-  return token;
-}
-
-// cleanup
-setInterval(() => {
-  const now = Date.now();
-  for (const [t, v] of TEMP_FILES.entries()) {
-    if (v.expiresAt <= now) TEMP_FILES.delete(t);
-  }
-}, 60_000);
-
-// Route for ML/Runpod to fetch file by token
-app.get("/api/tmp/:token", (req, res) => {
-  const item = TEMP_FILES.get(req.params.token);
-  if (!item || item.expiresAt <= Date.now()) return res.sendStatus(404);
-
-  res.setHeader("Content-Type", item.mime);
-  res.setHeader("Content-Disposition", `attachment; filename="${item.filename}"`);
-  return res.send(item.buffer);
-});
-
-function publicBaseUrl(req) {
-  const proto = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  return `${proto}://${host}`;
-}
-
-// -------------------------
-// Multer (Excel upload)
+// Upload
 // -------------------------
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB исходный файл (base64 будет больше!)
   fileFilter: (req, file, cb) => {
     const ok =
       file.mimetype ===
@@ -138,6 +97,7 @@ function autoMap(headers) {
 
   function findOne(key) {
     const aliases = (reqCfg.aliases?.[key] || []).map(norm);
+
     const exact = headersInfo.find((h) => aliases.includes(h.n));
     if (exact) return exact.raw;
 
@@ -209,8 +169,7 @@ function validateMapping(mapping, columns) {
     errors.push(`Mapped column not found: ${mapping.product_images}`);
 
   if (!mapping.title) errors.push("Missing mapping: title");
-  else if (!set.has(mapping.title))
-    errors.push(`Mapped column not found: ${mapping.title}`);
+  else if (!set.has(mapping.title)) errors.push(`Mapped column not found: ${mapping.title}`);
 
   if (!mapping.description) errors.push("Missing mapping: description");
   else if (!set.has(mapping.description))
@@ -226,82 +185,125 @@ function validateMapping(mapping, columns) {
   return { ok: errors.length === 0, errors, bullet_points: bp };
 }
 
-// -------------------------
-// Runpod client
-// -------------------------
-async function runpodRun({ fileUrl, mapping, models }) {
-  const endpointId = process.env.RUNPOD_ENDPOINT_ID;
-  const apiKey = process.env.RUNPOD_API_KEY;
-  const base = process.env.RUNPOD_BASE_URL || "https://api.runpod.ai/v2";
-
-  if (!endpointId) throw new Error("RUNPOD_ENDPOINT_ID is not set");
-  if (!apiKey) throw new Error("RUNPOD_API_KEY is not set");
-
-  const r = await fetch(`${base}/${endpointId}/run`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
-      authorization: apiKey,
-    },
-    body: JSON.stringify({
-      input: { file_url: fileUrl, mapping, models },
-    }),
-  });
-
-  if (!r.ok) throw new Error(`Runpod /run failed: ${r.status} ${await r.text()}`);
-  return await r.json(); // expect { id, status, ... }
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-async function runpodStatus(runpodJobId) {
-  const endpointId = process.env.RUNPOD_ENDPOINT_ID;
-  const apiKey = process.env.RUNPOD_API_KEY;
-  const base = process.env.RUNPOD_BASE_URL || "https://api.runpod.ai/v2";
-
-  const r = await fetch(`${base}/${endpointId}/status/${runpodJobId}`, {
-    headers: { authorization: apiKey, accept: "application/json" },
-  });
-
-  if (!r.ok) throw new Error(`Runpod /status failed: ${r.status} ${await r.text()}`);
-  return await r.json();
+function isRetryableFetchError(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  // типовые сетевые/таймаутные проблемы
+  return (
+    msg.includes("fetch failed") ||
+    msg.includes("socket") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("timeout") ||
+    msg.includes("network") ||
+    msg.includes("undici") // иногда node fetch пишет undici errors
+  );
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function fetchJsonWithRetry(url, options, {
+  retries = 5,
+  timeoutMs = 60 * 60 * 1000, // 60 minutes
+  baseDelayMs = 2000,
+  maxDelayMs = 60_000,
+} = {}) {
+  let lastErr;
 
-async function waitRunpod(runpodJobId, { intervalMs = 4000, timeoutMs = 20 * 60 * 1000 } = {}) {
-  const started = Date.now();
-  while (true) {
-    const st = await runpodStatus(runpodJobId);
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (st.status === "COMPLETED") return st;
-    if (st.status === "FAILED" || st.status === "TIMED_OUT" || st.status === "CANCELLED") {
-      throw new Error(`Runpod job ${st.status}: ${JSON.stringify(st.error || st)}`);
+    try {
+      const r = await fetch(url, { ...options, signal: controller.signal });
+
+      const text = await r.text();
+
+      // 5xx часто стоит ретраить (может быть прогрев/перезапуск)
+      if (!r.ok) {
+        const err = new Error(`HTTP ${r.status}: ${text}`);
+        err.httpStatus = r.status;
+        throw err;
+      }
+
+      const data = JSON.parse(text);
+      return data;
+    } catch (e) {
+      lastErr = e;
+
+      const status = e?.httpStatus;
+      const retryableHttp = status && (status === 429 || status >= 500); // 429/5xx
+      const retryableNet = isRetryableFetchError(e) || e?.name === "AbortError";
+
+      if (attempt === retries || (!retryableHttp && !retryableNet)) {
+        throw lastErr;
+      }
+
+      // backoff: 2s, 4s, 8s... + jitter
+      const exp = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * 500);
+      const wait = exp + jitter;
+
+      console.warn(`Inference attempt ${attempt} failed, retrying in ${wait}ms`, {
+        error: String(e?.message || e),
+        status,
+      });
+
+      await sleep(wait);
+    } finally {
+      clearTimeout(t);
     }
-
-    if (Date.now() - started > timeoutMs) throw new Error("Runpod wait timeout");
-    await sleep(intervalMs);
   }
+
+  throw lastErr;
 }
 
-async function getResultBufferFromRunpodOutput(output) {
-  // Contract options with ML:
-  // 1) output.result_file_url  (best)
-  // 2) output.result_file_base64
-  if (!output) throw new Error("Runpod COMPLETED but output is empty");
 
-  if (output.result_file_url) {
-    const r = await fetch(output.result_file_url);
-    if (!r.ok) throw new Error(`Failed to download result_file_url: ${r.status}`);
-    const ab = await r.arrayBuffer();
-    return Buffer.from(ab);
-  }
+// -------------------------
+// Modal inference client
+// -------------------------
+async function callInferenceModal({ buffer, filename, modelsList }) {
+  const url =
+    process.env.INFERENCE_URL ||
+    "https://dsitdvitamins--test-inference-predict.modal.run";
+  const apiKey = process.env.INFERENCE_API_KEY;
 
-  if (output.result_file_base64) {
-    return Buffer.from(output.result_file_base64, "base64");
-  }
+  if (!apiKey) throw new Error("INFERENCE_API_KEY is not set");
 
-  throw new Error("Unknown output format (need result_file_url or result_file_base64)");
+  const xlsxBase64 = Buffer.from(buffer).toString("base64");
+
+  const payload = {
+    api_key: apiKey,
+    xlsx_base64: xlsxBase64,
+    models_list: modelsList,
+    filename: filename || "input.xlsx",
+  };
+
+  const data = await fetchJsonWithRetry(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    {
+      retries: Number(process.env.INFERENCE_RETRIES || 5),
+      timeoutMs: Number(process.env.INFERENCE_TIMEOUT_MS || 60 * 60 * 1000), // 60 min
+      baseDelayMs: Number(process.env.INFERENCE_RETRY_BASE_DELAY_MS || 2000),
+      maxDelayMs: Number(process.env.INFERENCE_RETRY_MAX_DELAY_MS || 60_000),
+    }
+  );
+
+  if (!data?.ok) throw new Error(`Inference ok=false: ${JSON.stringify(data)}`);
+  if (!data.xlsx_base64) throw new Error("Inference missing xlsx_base64");
+
+  return data;
 }
+
 
 // -------------------------
 // Swagger (OpenAPI)
@@ -313,7 +315,7 @@ const swaggerSpec = swaggerJSDoc({
       title: "ML Parser XLSX API",
       version: "1.0.0",
       description:
-        "Upload Excel, map required columns, choose prediction models, submit a job (sent to Runpod), and receive the result by email.",
+        "Upload Excel, map required columns, choose prediction models, submit a job (sent to Modal inference API), and receive the result by email.",
     },
     servers: [{ url: "/" }],
   },
@@ -342,9 +344,7 @@ swaggerSpec.paths = {
           "multipart/form-data": {
             schema: {
               type: "object",
-              properties: {
-                file: { type: "string", format: "binary" },
-              },
+              properties: { file: { type: "string", format: "binary" } },
               required: ["file"],
             },
           },
@@ -385,10 +385,9 @@ swaggerSpec.paths = {
 
   "/api/jobs": {
     post: {
-      summary: "Create job (sent to Runpod, result delivered by email)",
+      summary: "Create job (sent to Modal inference API, result delivered by email)",
       description:
-        "Validates mapping + models, uploads input file, sends a Runpod /run request, returns jobId and runpodJobId.\n" +
-        "Then backend waits for Runpod completion and emails the resulting file.\n\n" +
+        "Validates mapping + models, uploads input file, calls Modal inference API, and emails resulting XLSX.\n\n" +
         "IMPORTANT: mapping/models are JSON strings in multipart/form-data.",
       requestBody: {
         required: true,
@@ -404,7 +403,7 @@ swaggerSpec.paths = {
                   example:
                     '{"product_images":"Product Images","title":"Title","description":"Description","bullet_points":["Bullet Point 1","Bullet Point 2"]}',
                 },
-                models: { type: "string", example: '["demand_forecast","stockout_risk"]' },
+                models: { type: "string", example: '["braket_type"]' },
               },
               required: ["file", "email", "mapping", "models"],
             },
@@ -413,7 +412,7 @@ swaggerSpec.paths = {
       },
       responses: {
         201: {
-          description: "Job created (Runpod started)",
+          description: "Job created",
           content: {
             "application/json": { schema: { $ref: "#/components/schemas/JobResponse" } },
           },
@@ -434,8 +433,8 @@ swaggerSpec.components = {
     Model: {
       type: "object",
       properties: {
-        id: { type: "string", example: "demand_forecast" },
-        title: { type: "string", example: "Demand forecast" },
+        id: { type: "string", example: "braket_type" },
+        title: { type: "string", example: "Bracket type" },
       },
       required: ["id", "title"],
     },
@@ -443,14 +442,10 @@ swaggerSpec.components = {
     InspectAutoMapping: {
       type: "object",
       properties: {
-        product_images: { type: ["string", "null"], example: "Product Images" },
-        title: { type: ["string", "null"], example: "Title" },
-        description: { type: ["string", "null"], example: "Description" },
-        bullet_points: {
-          type: "array",
-          items: { type: "string" },
-          example: ["Bullet Point 1", "Bullet Point 2"],
-        },
+        product_images: { type: ["string", "null"] },
+        title: { type: ["string", "null"] },
+        description: { type: ["string", "null"] },
+        bullet_points: { type: "array", items: { type: "string" } },
       },
       required: ["product_images", "title", "description", "bullet_points"],
     },
@@ -458,7 +453,7 @@ swaggerSpec.components = {
     InspectResponse: {
       type: "object",
       properties: {
-        fileToken: { type: "string", example: "f_4fd1c2a9d0b84c19a3c3a1b8b4c1e2aa" },
+        fileToken: { type: "string" },
         columns: { type: "array", items: { type: "string" } },
         required: { type: "array", items: { type: "string" } },
         autoMapping: { $ref: "#/components/schemas/InspectAutoMapping" },
@@ -476,15 +471,14 @@ swaggerSpec.components = {
       properties: {
         jobId: { type: "string", example: "job_3a8f2c1d9b4e7f10" },
         status: { type: "string", example: "queued" },
-        runpodJobId: { type: "string", example: "rp_1234567890abcdef" },
       },
-      required: ["jobId", "status", "runpodJobId"],
+      required: ["jobId", "status"],
     },
 
     ErrorResponse: {
       type: "object",
       properties: {
-        error: { type: "string", example: "Invalid mapping" },
+        error: { type: "string" },
         details: {
           oneOf: [
             { type: "string" },
@@ -518,7 +512,7 @@ app.post("/api/inspect", upload.single("file"), (req, res) => {
     candidates[key] = candidatesFor(columns, key, key === "bullet_points" ? 20 : 10);
   }
 
-  const fileToken = "f_" + crypto.randomBytes(16).toString("hex"); // purely for frontend correlation
+  const fileToken = "f_" + crypto.randomBytes(16).toString("hex");
 
   return res.json({
     fileToken,
@@ -535,7 +529,7 @@ app.get("/api/models", (req, res) => {
   res.json(modelsCfg);
 });
 
-// Step 3: jobs -> send to Runpod -> email result
+// Step 3: jobs -> call Modal -> email result
 app.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
     const email = String(req.body.email || "").trim();
@@ -560,39 +554,40 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
 
     const jobId = "job_" + crypto.randomBytes(8).toString("hex");
 
-    // store temp file for Runpod to download
-    const token = putTempFile({
-      buffer: req.file.buffer,
-      filename: req.file.originalname || "input.xlsx",
-      mime: req.file.mimetype,
-    });
-    const fileUrl = `${publicBaseUrl(req)}/api/tmp/${token}`;
+    // быстро отвечаем фронту
+    res.status(201).json({ jobId, status: "queued" });
 
-    // start Runpod
-    const runInfo = await runpodRun({ fileUrl, mapping, models });
-    const runpodJobId = runInfo.id;
-
-    // respond to frontend immediately
-    res.status(201).json({ jobId, status: "queued", runpodJobId });
-
-    // background: wait for result and email it
+    // в фоне: инференс -> письмо
     setImmediate(async () => {
       try {
-        const st = await waitRunpod(runpodJobId);
-        const resultBuffer = await getResultBufferFromRunpodOutput(st.output);
+        const reqFilename = req.file.originalname || "input.xlsx";
+
+        const inferenceResp = await callInferenceModal({
+          buffer: req.file.buffer,
+          filename: reqFilename,
+          modelsList: models,
+        });
+
+        const resultBuf = Buffer.from(inferenceResp.xlsx_base64, "base64");
+        const outName = inferenceResp.filename || `result-${jobId}.xlsx`;
 
         await sendResultEmail({
           to: email,
           subject: "Your file is ready",
-          text: `Done. JobId: ${jobId}`,
-          filename: `result-${jobId}.xlsx`,
-          contentBuffer: resultBuffer,
+          text: `Done. JobId: ${jobId}\nRows: ${inferenceResp.n_rows ?? "?"}`,
+          filename: outName,
+          contentBuffer: resultBuf,
         });
 
-        console.log("✅ Completed & emailed:", { jobId, runpodJobId, email });
+        console.log("✅ Completed & emailed:", {
+          jobId,
+          email,
+          n_rows: inferenceResp.n_rows,
+          content_type: inferenceResp.content_type,
+        });
       } catch (e) {
-        console.error("❌ Background job failed:", { jobId, runpodJobId, error: e?.message || e });
-        // Optional: email failure notice here if you want
+        console.error("❌ Background job failed:", { jobId, error: e?.message || e });
+        // опционально: отправить письмо об ошибке
       }
     });
   } catch (e) {
