@@ -101,7 +101,9 @@ function autoMap(headers) {
     const exact = headersInfo.find((h) => aliases.includes(h.n));
     if (exact) return exact.raw;
 
-    const partial = headersInfo.find((h) => aliases.some((a) => h.n.includes(a)));
+    const partial = headersInfo.find((h) =>
+      aliases.some((a) => h.n.includes(a))
+    );
     return partial ? partial.raw : null;
   }
 
@@ -124,7 +126,8 @@ function autoMap(headers) {
   if (!mapping.product_images) missing.push("product_images");
   if (!mapping.title) missing.push("title");
   if (!mapping.description) missing.push("description");
-  if (!mapping.bullet_points || mapping.bullet_points.length === 0) missing.push("bullet_points");
+  if (!mapping.bullet_points || mapping.bullet_points.length === 0)
+    missing.push("bullet_points");
 
   return { mapping, missing };
 }
@@ -169,7 +172,8 @@ function validateMapping(mapping, columns) {
     errors.push(`Mapped column not found: ${mapping.product_images}`);
 
   if (!mapping.title) errors.push("Missing mapping: title");
-  else if (!set.has(mapping.title)) errors.push(`Mapped column not found: ${mapping.title}`);
+  else if (!set.has(mapping.title))
+    errors.push(`Mapped column not found: ${mapping.title}`);
 
   if (!mapping.description) errors.push("Missing mapping: description");
   else if (!set.has(mapping.description))
@@ -178,7 +182,8 @@ function validateMapping(mapping, columns) {
   if (!bp.length) errors.push("Missing mapping: bullet_points");
   else {
     for (const col of bp) {
-      if (!set.has(col)) errors.push(`Mapped bullet_points column not found: ${col}`);
+      if (!set.has(col))
+        errors.push(`Mapped bullet_points column not found: ${col}`);
     }
   }
 
@@ -203,12 +208,16 @@ function isRetryableFetchError(err) {
   );
 }
 
-async function fetchJsonWithRetry(url, options, {
-  retries = 5,
-  timeoutMs = 60 * 60 * 1000, // 60 minutes
-  baseDelayMs = 2000,
-  maxDelayMs = 60_000,
-} = {}) {
+async function fetchJsonWithRetry(
+  url,
+  options,
+  {
+    retries = 5,
+    timeoutMs = 60 * 60 * 1000, // 60 minutes
+    baseDelayMs = 2000,
+    maxDelayMs = 60_000,
+  } = {}
+) {
   let lastErr;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -245,10 +254,13 @@ async function fetchJsonWithRetry(url, options, {
       const jitter = Math.floor(Math.random() * 500);
       const wait = exp + jitter;
 
-      console.warn(`Inference attempt ${attempt} failed, retrying in ${wait}ms`, {
-        error: String(e?.message || e),
-        status,
-      });
+      console.warn(
+        `Inference attempt ${attempt} failed, retrying in ${wait}ms`,
+        {
+          error: String(e?.message || e),
+          status,
+        }
+      );
 
       await sleep(wait);
     } finally {
@@ -258,7 +270,6 @@ async function fetchJsonWithRetry(url, options, {
 
   throw lastErr;
 }
-
 
 // -------------------------
 // Modal inference client
@@ -304,7 +315,6 @@ async function callInferenceModal({ buffer, filename, modelsList }) {
   return data;
 }
 
-
 // -------------------------
 // Swagger (OpenAPI)
 // -------------------------
@@ -329,7 +339,9 @@ swaggerSpec.paths = {
       responses: {
         200: {
           description: "OK",
-          content: { "text/plain": { schema: { type: "string", example: "OK" } } },
+          content: {
+            "text/plain": { schema: { type: "string", example: "OK" } },
+          },
         },
       },
     },
@@ -354,13 +366,17 @@ swaggerSpec.paths = {
         200: {
           description: "Inspection result",
           content: {
-            "application/json": { schema: { $ref: "#/components/schemas/InspectResponse" } },
+            "application/json": {
+              schema: { $ref: "#/components/schemas/InspectResponse" },
+            },
           },
         },
         400: {
           description: "Bad request",
           content: {
-            "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ErrorResponse" },
+            },
           },
         },
       },
@@ -375,7 +391,10 @@ swaggerSpec.paths = {
           description: "Models list",
           content: {
             "application/json": {
-              schema: { type: "array", items: { $ref: "#/components/schemas/Model" } },
+              schema: {
+                type: "array",
+                items: { $ref: "#/components/schemas/Model" },
+              },
             },
           },
         },
@@ -385,7 +404,8 @@ swaggerSpec.paths = {
 
   "/api/jobs": {
     post: {
-      summary: "Create job (sent to Modal inference API, result delivered by email)",
+      summary:
+        "Create job (sent to Modal inference API, result delivered by email)",
       description:
         "Validates mapping + models, uploads input file, calls Modal inference API, and emails resulting XLSX.\n\n" +
         "IMPORTANT: mapping/models are JSON strings in multipart/form-data.",
@@ -414,13 +434,17 @@ swaggerSpec.paths = {
         201: {
           description: "Job created",
           content: {
-            "application/json": { schema: { $ref: "#/components/schemas/JobResponse" } },
+            "application/json": {
+              schema: { $ref: "#/components/schemas/JobResponse" },
+            },
           },
         },
         400: {
           description: "Validation error",
           content: {
-            "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ErrorResponse" },
+            },
           },
         },
       },
@@ -463,7 +487,14 @@ swaggerSpec.components = {
           additionalProperties: { type: "array", items: { type: "string" } },
         },
       },
-      required: ["fileToken", "columns", "required", "autoMapping", "missing", "candidates"],
+      required: [
+        "fileToken",
+        "columns",
+        "required",
+        "autoMapping",
+        "missing",
+        "candidates",
+      ],
     },
 
     JobResponse: {
@@ -493,7 +524,11 @@ swaggerSpec.components = {
 };
 
 app.get("/openapi.json", (req, res) => res.json(swaggerSpec));
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
+app.use(
+  "/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, { explorer: true })
+);
 
 // -------------------------
 // Routes
@@ -509,7 +544,11 @@ app.post("/api/inspect", upload.single("file"), (req, res) => {
 
   const candidates = {};
   for (const key of reqCfg.required) {
-    candidates[key] = candidatesFor(columns, key, key === "bullet_points" ? 20 : 10);
+    candidates[key] = candidatesFor(
+      columns,
+      key,
+      key === "bullet_points" ? 20 : 10
+    );
   }
 
   const fileToken = "f_" + crypto.randomBytes(16).toString("hex");
@@ -534,7 +573,7 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
     const email = String(req.body.email || "").trim();
     const mapping = safeJsonParse(req.body.mapping || "{}", {});
-    const models = safeJsonParse(req.body.models || "[]", []);
+    const models = ["braket_type"];
 
     if (!req.file) return res.status(400).json({ error: "No file" });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -543,14 +582,24 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
     const columns = extractColumnsFromFirstSheet(req.file.buffer);
 
     const v = validateMapping(mapping, columns);
-    if (!v.ok) return res.status(400).json({ error: "Invalid mapping", details: v.errors });
+    if (!v.ok)
+      return res
+        .status(400)
+        .json({ error: "Invalid mapping", details: v.errors });
     mapping.bullet_points = v.bullet_points;
 
     const allowed = new Set(modelsCfg.map((m) => m.id));
     for (const m of models) {
-      if (!allowed.has(m)) return res.status(400).json({ error: `Unknown model: ${m}` });
+      if (!allowed.has(m)) {
+        return res
+          .status(400)
+          .json({
+            error: `Hardcoded model is not in configs/models.json: ${m}`,
+          });
+      }
     }
-    if (!models.length) return res.status(400).json({ error: "No models selected" });
+    if (!models.length)
+      return res.status(400).json({ error: "No models selected" });
 
     const jobId = "job_" + crypto.randomBytes(8).toString("hex");
 
@@ -586,7 +635,10 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
           content_type: inferenceResp.content_type,
         });
       } catch (e) {
-        console.error("❌ Background job failed:", { jobId, error: e?.message || e });
+        console.error("❌ Background job failed:", {
+          jobId,
+          error: e?.message || e,
+        });
         // опционально: отправить письмо об ошибке
       }
     });
@@ -599,7 +651,9 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
 // Process error handlers
 // -------------------------
 process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
-process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
+process.on("unhandledRejection", (e) =>
+  console.error("unhandledRejection:", e)
+);
 
 // -------------------------
 // Listen
