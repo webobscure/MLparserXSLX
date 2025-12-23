@@ -1,4 +1,5 @@
 [
   { "id": "demand_forecast", "title": "Demand forecast" },
-  { "id": "stockout_risk", "title": "Stockout risk" }
+  { "id": "stockout_risk", "title": "Stockout risk" },
+  { "id": "bracket_type", "title": "bracket_type" }
 ]
