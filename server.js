@@ -401,7 +401,7 @@ swaggerSpec.paths = {
                 mapping: {
                   type: "string",
                   example:
-                    '{"product_images":"Product Images","title":"Title","description":"Description","bullet_points":["Bullet Point 1","Bullet Point 2"]}',
+                    '{"product_images":"Product Images","title":"Title","description":"Description","bullet_points":"Bullet Points"}',
                 },
                 models: { type: "string", example: '["braket_type"]' },
               },
@@ -445,7 +445,7 @@ swaggerSpec.components = {
         product_images: { type: ["string", "null"] },
         title: { type: ["string", "null"] },
         description: { type: ["string", "null"] },
-        bullet_points: { type: "array", items: { type: "string" } },
+        bullet_points: { type: ["string", "null"] },
       },
       required: ["product_images", "title", "description", "bullet_points"],
     },
