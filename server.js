@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-
+const dotenv = require("dotenv");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -15,6 +15,7 @@ const swaggerJSDoc = require("swagger-jsdoc");
 const { sendResultEmail } = require("./mailer");
 
 const app = express();
+dotenv.config();
 app.set("trust proxy", 1);
 app.use(cors());
 
@@ -592,11 +593,9 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
     const allowed = new Set(modelsCfg.map((m) => m.id));
     for (const m of models) {
       if (!allowed.has(m)) {
-        return res
-          .status(400)
-          .json({
-            error: `Hardcoded model is not in configs/models.json: ${m}`,
-          });
+        return res.status(400).json({
+          error: `Hardcoded model is not in configs/models.json: ${m}`,
+        });
       }
     }
     if (!models.length)
@@ -609,15 +608,27 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
 
     // в фоне: инференс -> письмо
     setImmediate(async () => {
-      try {
-        const reqFilename = req.file.originalname || "input.xlsx";
+      await sendResultEmail({
+        to: email,
+        subject: "⏳ Your file is being processed",
+        text: `Job ${jobId} has started.\nWe will email you when it is ready.`,
+      });
+      const reqFilename = req.file.originalname || "input.xlsx";
 
-        const inferenceResp = await callInferenceModal({
+      let inferenceResp;
+      try {
+        inferenceResp = await callInferenceModal({
           buffer: req.file.buffer,
           filename: reqFilename,
           modelsList: models,
         });
+        console.log("✅ Inference OK", { jobId, n_rows: inferenceResp.n_rows });
+      } catch (e) {
+        console.error("❌ Inference failed", { jobId, error: e?.message || e });
+        return;
+      }
 
+      try {
         const resultBuf = Buffer.from(inferenceResp.xlsx_base64, "base64");
         const outName = inferenceResp.filename || `result-${jobId}.xlsx`;
 
@@ -629,18 +640,15 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
           contentBuffer: resultBuf,
         });
 
-        console.log("✅ Completed & emailed:", {
-          jobId,
-          email,
-          n_rows: inferenceResp.n_rows,
-          content_type: inferenceResp.content_type,
-        });
+        console.log("✅ Email sent", { jobId, email });
       } catch (e) {
-        console.error("❌ Background job failed:", {
+        console.error("❌ Email failed", {
           jobId,
           error: e?.message || e,
+          name: e?.name,
+          code: e?.code,
+          response: e?.response,
         });
-        // опционально: отправить письмо об ошибке
       }
     });
   } catch (e) {
@@ -656,8 +664,34 @@ process.on("unhandledRejection", (e) =>
   console.error("unhandledRejection:", e)
 );
 
-// -------------------------
-// Listen
-// -------------------------
+async function sendStartupEmailOnce() {
+  try {
+    if (!process.env.STARTUP_NOTIFY_EMAIL) {
+      console.log("ℹ️ STARTUP_NOTIFY_EMAIL not set, skip startup email");
+      return;
+    }
+
+    await sendResultEmail({
+      to: process.env.STARTUP_NOTIFY_EMAIL,
+      subject: "🚀 ML Parser service started",
+      text: [
+        "Service startup notification",
+        "",
+        `Time: ${new Date().toISOString()}`,
+        `Node: ${process.version}`,
+        `PID: ${process.pid}`,
+        `Env: ${process.env.NODE_ENV || "unknown"}`,
+      ].join("\n"),
+    });
+
+    console.log("📨 Startup email sent");
+  } catch (e) {
+    console.error("❌ Failed to send startup email:", e?.message || e);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0", () => console.log("Listening on", PORT));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Listening on", PORT);
+  sendStartupEmailOnce();
+});

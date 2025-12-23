@@ -156,6 +156,21 @@ async function sendResultEmail({ to, subject, text, filename, contentBuffer, htm
   const fromEmail = process.env.GMAIL_EMAIL;
   if (!fromEmail) throw new Error("GMAIL_EMAIL is not set");
 
+  // attachments are optional
+  const attachments = [];
+  if (contentBuffer != null) {
+    if (!Buffer.isBuffer(contentBuffer)) {
+      throw new Error("contentBuffer must be a Buffer when provided");
+    }
+
+    attachments.push({
+      filename: filename || "result.xlsx",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      content: contentBuffer,
+    });
+  }
+
   const raw = buildRawEmail({
     fromEmail,
     fromName: process.env.GMAIL_FROM_NAME || "ML Parser",
@@ -163,14 +178,7 @@ async function sendResultEmail({ to, subject, text, filename, contentBuffer, htm
     subject,
     text,
     html,
-    attachments: [
-      {
-        filename,
-        contentType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        content: contentBuffer, // Buffer
-      },
-    ],
+    attachments,
   });
 
   const encodedMessage = base64UrlEncode(raw);
@@ -180,7 +188,8 @@ async function sendResultEmail({ to, subject, text, filename, contentBuffer, htm
     requestBody: { raw: encodedMessage },
   });
 
-  return resp.data; // { id, threadId, labelIds ... }
+  return resp.data;
 }
+
 
 module.exports = { sendResultEmail };
