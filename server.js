@@ -573,7 +573,8 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
     const email = String(req.body.email || "").trim();
     const mapping = safeJsonParse(req.body.mapping || "{}", {});
-    const models = ["braket_type"];
+    let models = safeJsonParse(req.body.models || "[]", []);
+    if (!Array.isArray(models) || !models.length) models = ["braket_type"];
 
     if (!req.file) return res.status(400).json({ error: "No file" });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
