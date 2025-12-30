@@ -152,38 +152,35 @@ function candidatesFor(headers, key, limit = 10) {
 }
 
 function validateMapping(mapping, columns) {
-  const set = new Set(columns);
+  const normToRaw = new Map();
+  for (const c of columns) normToRaw.set(norm(c), c);
 
-  const bp = Array.isArray(mapping.bullet_points)
-    ? mapping.bullet_points
-    : mapping.bullet_points
-    ? [mapping.bullet_points]
-    : [];
+  function exists(col) {
+    if (!col) return null;
+    return normToRaw.get(norm(col)) || null;
+  }
 
   const errors = [];
 
-  if (!mapping.product_images) errors.push("Missing mapping: product_images");
-  else if (!set.has(mapping.product_images))
-    errors.push(`Mapped column not found: ${mapping.product_images}`);
+  const product_images = exists(mapping.product_images);
+  if (!product_images) errors.push(`Mapped column not found: ${mapping.product_images}`);
 
-  if (!mapping.title) errors.push("Missing mapping: title");
-  else if (!set.has(mapping.title))
-    errors.push(`Mapped column not found: ${mapping.title}`);
+  const title = exists(mapping.title);
+  if (!title) errors.push(`Mapped column not found: ${mapping.title}`);
 
-  if (!mapping.description) errors.push("Missing mapping: description");
-  else if (!set.has(mapping.description))
-    errors.push(`Mapped column not found: ${mapping.description}`);
+  const description = exists(mapping.description);
+  if (!description) errors.push(`Mapped column not found: ${mapping.description}`);
 
-  if (!bp.length) errors.push("Missing mapping: bullet_points");
-  else {
-    for (const col of bp) {
-      if (!set.has(col))
-        errors.push(`Mapped bullet_points column not found: ${col}`);
-    }
-  }
+  const bpInput = Array.isArray(mapping.bullet_points)
+    ? mapping.bullet_points
+    : mapping.bullet_points ? [mapping.bullet_points] : [];
 
-  return { ok: errors.length === 0, errors, bullet_points: bp };
+  const bullet_points = bpInput.map(exists).filter(Boolean);
+  if (!bullet_points.length) errors.push(`Mapped bullet_points column not found: ${bpInput.join(", ")}`);
+
+  return { ok: errors.length === 0, errors, bullet_points };
 }
+
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
