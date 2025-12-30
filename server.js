@@ -19,9 +19,7 @@ dotenv.config();
 app.set("trust proxy", 1);
 app.use(cors());
 
-// -------------------------
-// Configs
-// -------------------------
+//  Configs
 const reqCfg = JSON.parse(
   fs.readFileSync(path.join(__dirname, "configs/required.json"), "utf-8")
 );
@@ -30,9 +28,7 @@ const modelsCfg = JSON.parse(
   fs.readFileSync(path.join(__dirname, "configs/models.json"), "utf-8")
 );
 
-// -------------------------
-// Upload
-// -------------------------
+//  Upload
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB исходный файл (base64 будет больше!)
@@ -47,9 +43,7 @@ const upload = multer({
   },
 });
 
-// -------------------------
 // Helpers: parsing + mapping
-// -------------------------
 function norm(s) {
   return String(s ?? "")
     .trim()
@@ -197,7 +191,6 @@ function sleep(ms) {
 
 function isRetryableFetchError(err) {
   const msg = String(err?.message || "").toLowerCase();
-  // типовые сетевые/таймаутные проблемы
   return (
     msg.includes("fetch failed") ||
     msg.includes("socket") ||
@@ -205,7 +198,7 @@ function isRetryableFetchError(err) {
     msg.includes("etimedout") ||
     msg.includes("timeout") ||
     msg.includes("network") ||
-    msg.includes("undici") // иногда node fetch пишет undici errors
+    msg.includes("undici")
   );
 }
 
@@ -230,7 +223,6 @@ async function fetchJsonWithRetry(
 
       const text = await r.text();
 
-      // 5xx часто стоит ретраить (может быть прогрев/перезапуск)
       if (!r.ok) {
         const err = new Error(`HTTP ${r.status}: ${text}`);
         err.httpStatus = r.status;
@@ -272,9 +264,7 @@ async function fetchJsonWithRetry(
   throw lastErr;
 }
 
-// -------------------------
 // Modal inference client
-// -------------------------
 async function callInferenceModal({ buffer, filename, modelsList }) {
   const url =
     process.env.INFERENCE_URL ||
@@ -316,9 +306,7 @@ async function callInferenceModal({ buffer, filename, modelsList }) {
   return data;
 }
 
-// -------------------------
 // Swagger (OpenAPI)
-// -------------------------
 const swaggerSpec = swaggerJSDoc({
   definition: {
     openapi: "3.0.0",
@@ -531,9 +519,7 @@ app.use(
   swaggerUi.setup(swaggerSpec, { explorer: true })
 );
 
-// -------------------------
 // Routes
-// -------------------------
 app.get("/", (req, res) => res.send("OK"));
 
 // Step 1: inspect
@@ -656,9 +642,7 @@ app.post("/api/jobs", upload.single("file"), async (req, res) => {
   }
 });
 
-// -------------------------
-// Process error handlers
-// -------------------------
+//  Process error handlers
 process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
 process.on("unhandledRejection", (e) =>
   console.error("unhandledRejection:", e)
